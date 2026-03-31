@@ -17,22 +17,49 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// AppSource defines the Git source for the App
+type AppSource struct {
+	// repo is the URL of the Git repository
+	// +required
+	Repo string `json:"repo"`
+
+	// branch is the branch to deploy
+	// +optional
+	// +kubebuilder:default=main
+	Branch string `json:"branch,omitempty"`
+
+	// dockerfilePath is the path to the Dockerfile within the repository
+	// +optional
+	// +kubebuilder:default="./Dockerfile"
+	DockerfilePath string `json:"dockerfilePath,omitempty"`
+}
+
 // AppSpec defines the desired state of App
 type AppSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// source defines the Git repository to build and deploy
+	// +required
+	Source AppSource `json:"source"`
 
-	// foo is an example field of App. Edit app_types.go to remove/update
+	// replicas is the number of desired pod replicas
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// env is a list of environment variables to set in the app container
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// envFrom is a list of sources to populate environment variables in the app container
+	// +optional
+	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
 }
 
 // AppStatus defines the observed state of App.
