@@ -53,6 +53,8 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
 
 func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
 	var app appsv1alpha1.App
 	if err := r.Get(ctx, req.NamespacedName, &app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -62,6 +64,8 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if sha == "" {
 		return ctrl.Result{}, nil
 	}
+
+	log.Info("reconciling app", "app", app.Name, "sha", sha)
 
 	checkRunID, err := r.createCheckRun(ctx, &app, sha, forge.CheckStatusInProgress)
 	if err != nil {
@@ -75,6 +79,9 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	result, image, err := r.reconcileBuild(ctx, &app, sha, registrySecretName)
 	if err != nil || result.RequeueAfter > 0 {
+		if err != nil {
+			log.Error(err, "build failed", "app", app.Name)
+		}
 		if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionFailure); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
 		}
@@ -82,11 +89,14 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	if err := r.reconcileDeployment(ctx, &app, image, registrySecretName); err != nil {
+		log.Error(err, "deployment failed", "app", app.Name)
 		if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionFailure); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile deployment: %w", err)
 	}
+
+	log.Info("app reconciled successfully", "app", app.Name, "image", image)
 
 	if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionSuccess); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
@@ -96,6 +106,8 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 }
 
 func (r *AppReconciler) ensureRegistrySecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
+	log := logf.FromContext(ctx)
+	log.Info("ensuring registry secret", "secret", secretName)
 	installationID, err := r.getInstallationID(ctx)
 	if err != nil {
 		return err
@@ -154,9 +166,11 @@ func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.Ap
 }
 
 func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alpha1.App, image, registrySecretName string) error {
+	log := logf.FromContext(ctx)
 	var deploy appsv1.Deployment
 	err := r.Get(ctx, types.NamespacedName{Name: app.Name, Namespace: app.Namespace}, &deploy)
 	if errors.IsNotFound(err) {
+		log.Info("creating deployment", "app", app.Name, "image", image)
 		return r.Create(ctx, buildDeployment(app, image, registrySecretName))
 	}
 	if err != nil {
@@ -164,11 +178,13 @@ func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alph
 	}
 
 	if *deploy.Spec.Replicas != *app.Spec.Replicas || deploy.Spec.Template.Spec.Containers[0].Image != image {
+		log.Info("updating deployment", "app", app.Name, "image", image)
 		deploy.Spec.Replicas = app.Spec.Replicas
 		deploy.Spec.Template.Spec.Containers[0].Image = image
 		return r.Update(ctx, &deploy)
 	}
 
+	log.Info("deployment up to date", "app", app.Name)
 	return nil
 }
 
@@ -204,7 +220,9 @@ func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sh
 						{
 							Name:  "buildkit",
 							Image: "moby/buildkit:latest",
-							Args: []string{
+							Command: []string{
+								"buildctl-daemonless.sh",
+								"build",
 								"--frontend=dockerfile.v0",
 								"--opt", fmt.Sprintf("context=%s#%s", app.Spec.Source.Repo, sha),
 								"--opt", fmt.Sprintf("filename=%s", app.Spec.Source.DockerfilePath),
