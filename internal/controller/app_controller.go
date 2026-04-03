@@ -49,6 +49,7 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var app appsv1alpha1.App
@@ -73,6 +74,8 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// }
 
 	// if 
+
+	time.Sleep(30 * time.Second) // simulate build time
 
 	if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionSuccess); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)

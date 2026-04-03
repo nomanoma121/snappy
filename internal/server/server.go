@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -71,6 +72,7 @@ func (s *Server) Callback(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if err := s.k8s.Create(r.Context(), secret); err != nil {
+		log.Printf("failed to save installation_id: %v", err)
 		http.Error(w, "failed to save installation_id", http.StatusInternalServerError)
 		return
 	}

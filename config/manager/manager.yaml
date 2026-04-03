@@ -93,7 +93,23 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
-        volumeMounts: []
-      volumes: []
+        env:
+          - name: GITHUB_APP_ID
+            valueFrom:
+              secretKeyRef:
+                name: snappy-github-app
+                key: app-id
+          - name: GITHUB_PRIVATE_KEY_PATH
+            value: "/secrets/private-key.pem"
+        volumeMounts:
+          - name: github-private-key
+            mountPath: /secrets
+      volumes:
+        - name: github-private-key
+          secret:
+            secretName: snappy-github-app
+            items:
+              - key: private-key.pem
+                path: private-key.pem
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
