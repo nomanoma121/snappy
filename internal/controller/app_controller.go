@@ -40,9 +40,9 @@ import (
 // AppReconciler reconciles a App object
 type AppReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	githubClient *forge.GitHubClient
-	Registry string // e.g. "ghcr.io/you"
+	Scheme       *runtime.Scheme
+	GitHubClient *forge.GitHubClient
+	Registry     string // e.g. "ghcr.io/you"
 }
 
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps,verbs=get;list;watch;create;update;patch;delete
@@ -71,8 +71,9 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	// 	}
 	// 	return result, err
 	// }
-	time.Sleep(10 * time.Second) // Simulate build time
-	
+
+	// if 
+
 	if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionSuccess); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
 	}
@@ -111,7 +112,11 @@ func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.Ap
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
-// buildJob constructs the BuildKit Job for building and pushing the image.
+// // reconcileDeployment handles the deployment logic, which is out of scope for this example.k
+// func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alpha1.App) error {
+
+// }
+
 func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, sha string) *batchv1.Job {
 	destination := fmt.Sprintf("%s/%s:%s", r.Registry, app.Name, sha[:8])
 
@@ -168,7 +173,7 @@ func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 		return 0, err
 	}
 	owner, repo := parseRepoURL(app.Spec.Source.Repo)
-	return r.githubClient.CreateCheckRun(ctx, installationID, owner, repo, sha, "deploy", status)
+	return r.GitHubClient.CreateCheckRun(ctx, installationID, owner, repo, sha, "deploy", status)
 }
 
 func (r *AppReconciler) updateCheckRun(ctx context.Context, app *appsv1alpha1.App, checkRunID int64, conclusion forge.CheckConclusion) error {
@@ -177,7 +182,7 @@ func (r *AppReconciler) updateCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 		return err
 	}
 	owner, repo := parseRepoURL(app.Spec.Source.Repo)
-	return r.githubClient.UpdateCheckRun(ctx, installationID, owner, repo, checkRunID, conclusion)
+	return r.GitHubClient.UpdateCheckRun(ctx, installationID, owner, repo, checkRunID, conclusion)
 }
 
 // parseRepoURL extracts owner and repo from a GitHub URL.

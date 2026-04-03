@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	githubAppName   = "snappy-release"
+	githubAppName = "snappy-release"
 )
 
 type Server struct {
@@ -49,7 +49,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Install(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, fmt.Sprintf("https://github.com/apps/%s/installations/new", githubAppName), http.StatusFound)
+	http.Redirect(w, r,
+		fmt.Sprintf("https://github.com/apps/%s/installations/new", githubAppName),
+		http.StatusFound)
 }
 
 func (s *Server) Callback(w http.ResponseWriter, r *http.Request) {

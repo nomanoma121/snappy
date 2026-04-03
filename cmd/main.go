@@ -20,11 +20,13 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/joho/godotenv"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -37,6 +39,7 @@ import (
 
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
 	"github.com/nomanoma121/snappy/internal/controller"
+	"github.com/nomanoma121/snappy/internal/forge"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -86,6 +89,28 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if err := godotenv.Load(); err != nil {
+		setupLog.Error(err, "Failed to load .env file")
+		os.Exit(1)
+	}
+
+	appIDStr := os.Getenv("GITHUB_APP_ID")
+	privateKeyPath := os.Getenv("GITHUB_PRIVATE_KEY_PATH")
+	if appIDStr == "" || privateKeyPath == "" {
+		setupLog.Error(nil, "GITHUB_APP_ID and GITHUB_PRIVATE_KEY_PATH are required")
+		os.Exit(1)
+	}
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		setupLog.Error(err, "Invalid GITHUB_APP_ID")
+		os.Exit(1)
+	}
+	privateKey, err := os.ReadFile(privateKeyPath)
+	if err != nil {
+		setupLog.Error(err, "Failed to read private key")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -179,8 +204,9 @@ func main() {
 	}
 
 	if err := (&controller.AppReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		GitHubClient: forge.NewGitHubClient(appID, privateKey),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "App")
 		os.Exit(1)
