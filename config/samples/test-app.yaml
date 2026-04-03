@@ -1,0 +1,13 @@
+apiVersion: apps.nomanoma121.github.io/v1alpha1
+kind: App
+metadata:
+  labels:
+    app.kubernetes.io/name: snappy
+    app.kubernetes.io/managed-by: kustomize
+  name: app-sample
+spec:
+  source:
+    repo: https://github.com/nomanoma121/test-repository
+    branch: main 
+    dockerfilePath: ./sample/dockerfile-only-web/Dockerfile
+  replicas: 1
