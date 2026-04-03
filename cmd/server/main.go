@@ -28,7 +28,7 @@ func init() {
 
 func main() {
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("failed to load .env file")
+		log.Println("no .env file, using environment variables")
 	}
 
 	addr := mustEnv("SERVER_ADDR")

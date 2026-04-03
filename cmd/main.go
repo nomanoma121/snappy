@@ -91,8 +91,7 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	if err := godotenv.Load(); err != nil {
-		setupLog.Error(err, "Failed to load .env file")
-		os.Exit(1)
+		setupLog.Info("no .env file, using environment variables")
 	}
 
 	appIDStr := os.Getenv("GITHUB_APP_ID")
