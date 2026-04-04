@@ -1,9 +1,24 @@
 package config
 
+import "fmt"
+
 const (
-	TokenSecretName = "snappy-github-token"
-	TokenSecretNS   = "snappy-system"
+	InstallationIDSecretName = "snappy-installation-id-secret"
+	InstallationIDSecretNS   = "snappy-system"
+	InstallationIDKey = "installation_id"
 
 	LastPushAnnotation = "snappy/last-push-sha"
 	CheckRunAnnotation = "snappy/check-run-id"
 )
+
+func BuildPushImageJobName(appName, sha string) string {
+	return fmt.Sprintf("%s-build-push-%s", appName, sha[:8])
+}
+
+func BuildImageJobName(appName, sha string) string {
+	return fmt.Sprintf("%s-build-%s", appName, sha[:8])
+}
+
+func RepoSecretName(appName string) string {
+	return fmt.Sprintf("%s-repo-auth", appName)
+}

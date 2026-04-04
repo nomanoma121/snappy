@@ -70,7 +70,7 @@ func NewBuildPushImageJob(app *appsv1alpha1.App, jobName, destination, sha, repo
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "repo-auth",
+									Name:      "registry-auth",
 									MountPath: "/root/.docker",
 								},
 							},
@@ -78,7 +78,7 @@ func NewBuildPushImageJob(app *appsv1alpha1.App, jobName, destination, sha, repo
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: "repo-auth",
+							Name: "registry-auth",
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
 									SecretName: repoSecretName,

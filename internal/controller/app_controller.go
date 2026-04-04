@@ -74,12 +74,11 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("failed to create check run: %w", err)
 	}
 
-	repoSecretName := fmt.Sprintf("%s-repo-auth", app.Name)
-	if err := r.ensureRepoSecret(ctx, &app, repoSecretName); err != nil {
+	if err := r.ensureRepoSecret(ctx, &app, config.RepoSecretName(app.Name)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to ensure registry secret: %w", err)
 	}
 
-	result, image, err := r.reconcileBuild(ctx, &app, sha, repoSecretName)
+	result, image, err := r.reconcileBuild(ctx, &app, sha, config.RepoSecretName(app.Name))
 	if err != nil {
 		log.Error(err, "build failed", "app", app.Name)
 		if err := r.updateCheckRun(ctx, &app, checkRunID, github.CheckConclusionFailure); err != nil {
@@ -91,7 +90,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return result, nil
 	}
 
-	if err := r.reconcileDeployment(ctx, &app, image, repoSecretName); err != nil {
+	if err := r.reconcileDeployment(ctx, &app, image, config.RepoSecretName(app.Name)); err != nil {
 		log.Error(err, "deployment failed", "app", app.Name)
 		if err := r.updateCheckRun(ctx, &app, checkRunID, github.CheckConclusionFailure); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
@@ -143,7 +142,7 @@ func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.
 
 func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.App, sha, repoSecretName string) (ctrl.Result, string, error) {
 	log := logf.FromContext(ctx)
-	jobName := fmt.Sprintf("%s-build-%s", app.Name, sha[:8])
+	jobName := config.BuildPushImageJobName(app.Name, sha)
 	_, repoName := github.ParseRepoURL(app.Spec.Source.Repo)
 	destination := fmt.Sprintf("%s/%s:%s", r.Registry, repoName, sha[:8])
 
@@ -198,11 +197,10 @@ func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alph
 
 func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
-	// TODO: 名前分かりにくいのでtokenじゃなくてinstallation_idにしたい
-	if err := r.Get(ctx, types.NamespacedName{Name: config.TokenSecretName, Namespace: config.TokenSecretNS}, &secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: config.InstallationIDSecretName, Namespace: config.InstallationIDSecretNS}, &secret); err != nil {
 		return 0, fmt.Errorf("failed to get github token secret: %w", err)
 	}
-	return strconv.ParseInt(string(secret.Data["installation_id"]), 10, 64)
+	return strconv.ParseInt(string(secret.Data[config.InstallationIDKey]), 10, 64)
 }
 
 func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.App, sha string, status github.CheckStatus) (int64, error) {

@@ -71,11 +71,11 @@ func (s *Server) Callback(w http.ResponseWriter, r *http.Request) {
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.TokenSecretName,
-			Namespace: config.TokenSecretNS,
+			Name:      config.InstallationIDSecretName,
+			Namespace: config.InstallationIDSecretNS,
 		},
 		Data: map[string][]byte{
-			"installation_id": []byte(installationIDStr),
+			config.InstallationIDKey: []byte(installationIDStr),
 		},
 	}
 	if err := s.k8s.Create(r.Context(), secret); err != nil {
@@ -164,7 +164,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 	}
 
 	sha := *payload.PullRequest.Head.SHA
-	job := resource.NewBuildImageJob(app, fmt.Sprintf("%s-pr-build-%s", app.Name, sha[:8]), sha, fmt.Sprintf("%s-repo-auth", app.Name))
+	job := resource.NewBuildImageJob(app, config.BuildImageJobName(app.Name, sha), sha, config.RepoSecretName(app.Name))
 	if err := s.k8s.Create(ctx, job); err != nil {
 		log.Printf("failed to create job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
@@ -229,11 +229,11 @@ func (s *Server) lookupApp(ctx context.Context, repoURL, branch string) (*appsv1
 
 func (s *Server) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
-	if err := s.k8s.Get(ctx, client.ObjectKey{Name: config.TokenSecretName, Namespace: config.TokenSecretNS}, &secret); err != nil {
-		log.Printf("failed to get github token secret: %v", err)
-		return 0, fmt.Errorf("failed to get github token secret: %w", err)
+	if err := s.k8s.Get(ctx, client.ObjectKey{Name: config.InstallationIDSecretName, Namespace: config.InstallationIDSecretNS}, &secret); err != nil {
+		log.Printf("failed to get installation ID secret: %v", err)
+		return 0, fmt.Errorf("failed to get installation ID secret: %w", err)
 	}
-	return strconv.ParseInt(string(secret.Data["installation_id"]), 10, 64)
+	return strconv.ParseInt(string(secret.Data[config.InstallationIDKey]), 10, 64)
 }
 
 func (s *Server) updateLastPushSHA(ctx context.Context, app *appsv1alpha1.App, sha string) error {
