@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
-	"github.com/nomanoma121/snappy/internal/forge"
+	"github.com/nomanoma121/snappy/internal/github"
 	"github.com/nomanoma121/snappy/internal/server"
 )
 
@@ -45,7 +45,7 @@ func main() {
 		log.Fatalf("failed to read private key: %v", err)
 	}
 
-	ghClient := forge.NewGitHubClient(appID, privateKey)
+	ghClient := github.NewGitHubClient(appID, privateKey)
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {

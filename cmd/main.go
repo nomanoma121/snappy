@@ -39,7 +39,7 @@ import (
 
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
 	"github.com/nomanoma121/snappy/internal/controller"
-	"github.com/nomanoma121/snappy/internal/forge"
+	"github.com/nomanoma121/snappy/internal/github"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -211,7 +211,7 @@ func main() {
 	if err := (&controller.AppReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
-		GitHubClient: forge.NewGitHubClient(appID, privateKey),
+		GitHubClient: github.NewGitHubClient(appID, privateKey),
 		Registry:     "ghcr.io/nomanoma121",
 		GhcrPat:      string(ghcrPat),
 	}).SetupWithManager(mgr); err != nil {
