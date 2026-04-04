@@ -109,14 +109,15 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
 	log := logf.FromContext(ctx)
-	log.Info("ensuring registry secret", "secret", secretName)
 
 	installationID, err := r.getInstallationID(ctx)
 	if err != nil {
+		log.Error(err, "failed to get installation ID")
 		return err
 	}
 	token, err := r.GitHubClient.GetInstallationAccessToken(ctx, installationID)
 	if err != nil {
+		log.Error(err, "failed to get installation access token")
 		return fmt.Errorf("failed to get installation token: %w", err)
 	}
 
@@ -130,12 +131,13 @@ func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.
 		return r.Create(ctx, resource.NewAppSecret(app, secretName, dockerConfig, token))
 	}
 	if err != nil {
+		log.Error(err, "failed to get repo secret", "secret", secretName)
 		return err
 	}
 	secret.Type = corev1.SecretTypeDockerConfigJson
 	secret.Data = map[string][]byte{
-		corev1.DockerConfigJsonKey: []byte(dockerConfig),
-		"github-token":             []byte(token),
+		corev1.DockerConfigJsonKey:        []byte(dockerConfig),
+		config.InstallationAccessTokenKey: []byte(token),
 	}
 	return r.Update(ctx, secret)
 }
@@ -198,7 +200,7 @@ func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alph
 func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Name: config.InstallationIDSecretName, Namespace: config.InstallationIDSecretNS}, &secret); err != nil {
-		return 0, fmt.Errorf("failed to get github token secret: %w", err)
+		return 0, fmt.Errorf("failed to get installation ID secret: %w", err)
 	}
 	return strconv.ParseInt(string(secret.Data[config.InstallationIDKey]), 10, 64)
 }

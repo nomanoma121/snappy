@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
+	"github.com/nomanoma121/snappy/internal/config"
 	"github.com/nomanoma121/snappy/internal/github"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -11,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func NewAppSecret(app *appsv1alpha1.App, secretName, dockerConfig, githubToken string) *corev1.Secret {
+func NewAppSecret(app *appsv1alpha1.App, secretName, dockerConfig, installationAccessToken string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -23,7 +24,7 @@ func NewAppSecret(app *appsv1alpha1.App, secretName, dockerConfig, githubToken s
 		Type: corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{
 			corev1.DockerConfigJsonKey: []byte(dockerConfig),
-			"github-token":             []byte(githubToken),
+			config.InstallationAccessTokenKey: []byte(installationAccessToken),
 		},
 	}
 }
@@ -52,7 +53,7 @@ func NewBuildPushImageJob(app *appsv1alpha1.App, jobName, destination, sha, repo
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
 											LocalObjectReference: corev1.LocalObjectReference{Name: repoSecretName},
-											Key:                  "github-token",
+											Key:                  config.InstallationAccessTokenKey,
 										},
 									},
 								},
@@ -122,7 +123,7 @@ func NewBuildImageJob(app *appsv1alpha1.App, jobName, sha, repoSecretName string
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
 											LocalObjectReference: corev1.LocalObjectReference{Name: repoSecretName},
-											Key:                  "github-token",
+											Key:                  config.InstallationAccessTokenKey,
 										},
 									},
 								},

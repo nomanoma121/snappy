@@ -5,7 +5,9 @@ import "fmt"
 const (
 	InstallationIDSecretName = "snappy-installation-id-secret"
 	InstallationIDSecretNS   = "snappy-system"
-	InstallationIDKey = "installation_id"
+	InstallationIDKey = "installation-id"
+
+	InstallationAccessTokenKey = "installation-access-token"
 
 	LastPushAnnotation = "snappy/last-push-sha"
 	CheckRunAnnotation = "snappy/check-run-id"
