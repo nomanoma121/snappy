@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ import (
 const (
 	githubAppName = "snappy-release"
 )
+
+var interestedActions = []string{"opened", "synchronize"}
 
 type Server struct {
 	router chi.Router
@@ -127,6 +130,12 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 	var payload gh.PullRequestEvent
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+	// Closedのような関係の無いイベントは無視する
+	action := payload.GetAction()
+	if !slices.Contains(interestedActions, action) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	app, err := s.lookupApp(ctx, *payload.Repo.CloneURL, branchFromRef(*payload.PullRequest.Base.Ref))
