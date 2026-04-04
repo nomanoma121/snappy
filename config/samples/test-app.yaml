@@ -9,5 +9,5 @@ spec:
   source:
     repo: https://github.com/nomanoma121/test-repository
     branch: main 
-    dockerfilePath: ./sample/dockerfile-only-web/Dockerfile
+    dockerfilePath: ./samples/dockerfile-only-web/Dockerfile
   replicas: 1

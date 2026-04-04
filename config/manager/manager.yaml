@@ -101,6 +101,8 @@ spec:
                 key: app-id
           - name: GITHUB_PRIVATE_KEY_PATH
             value: "/secrets/private-key.pem"
+          - name: GHCR_PAT_PATH
+            value: "/secrets/ghcr-pat"
         volumeMounts:
           - name: github-private-key
             mountPath: /secrets
@@ -111,5 +113,7 @@ spec:
             items:
               - key: private-key.pem
                 path: private-key.pem
+              - key: ghcr-pat
+                path: ghcr-pat
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

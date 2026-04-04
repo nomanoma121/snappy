@@ -96,8 +96,9 @@ func main() {
 
 	appIDStr := os.Getenv("GITHUB_APP_ID")
 	privateKeyPath := os.Getenv("GITHUB_PRIVATE_KEY_PATH")
-	if appIDStr == "" || privateKeyPath == "" {
-		setupLog.Error(nil, "GITHUB_APP_ID and GITHUB_PRIVATE_KEY_PATH are required")
+	ghcrPatPath := os.Getenv("GHCR_PAT_PATH")
+	if appIDStr == "" || privateKeyPath == "" || ghcrPatPath == "" {
+		setupLog.Error(nil, "GITHUB_APP_ID, GITHUB_PRIVATE_KEY_PATH and GHCR_PAT_PATH are required")
 		os.Exit(1)
 	}
 	appID, err := strconv.ParseInt(appIDStr, 10, 64)
@@ -108,6 +109,11 @@ func main() {
 	privateKey, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		setupLog.Error(err, "Failed to read private key")
+		os.Exit(1)
+	}
+	ghcrPat, err := os.ReadFile(ghcrPatPath)
+	if err != nil {
+		setupLog.Error(err, "Failed to read ghcr PAT")
 		os.Exit(1)
 	}
 
@@ -206,6 +212,8 @@ func main() {
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		GitHubClient: forge.NewGitHubClient(appID, privateKey),
+		Registry:     "ghcr.io/nomanoma121",
+		GhcrPat:      string(ghcrPat),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "App")
 		os.Exit(1)

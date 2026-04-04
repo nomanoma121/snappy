@@ -44,6 +44,7 @@ type AppReconciler struct {
 	Scheme       *runtime.Scheme
 	GitHubClient *forge.GitHubClient
 	Registry     string // e.g. "ghcr.io/you"
+	GhcrPat      string // PAT for pushing to ghcr.io
 }
 
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps,verbs=get;list;watch;create;update;patch;delete
@@ -51,6 +52,7 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 
 func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -72,12 +74,12 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("failed to create check run: %w", err)
 	}
 
-	registrySecretName := fmt.Sprintf("%s-registry-auth", app.Name)
-	if err := r.ensureRegistrySecret(ctx, &app, registrySecretName); err != nil {
+	repoSecretName := fmt.Sprintf("%s-repo-auth", app.Name)
+	if err := r.ensureRepoSecret(ctx, &app, repoSecretName); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to ensure registry secret: %w", err)
 	}
 
-	result, image, err := r.reconcileBuild(ctx, &app, sha, registrySecretName)
+	result, image, err := r.reconcileBuild(ctx, &app, sha, repoSecretName)
 	if err != nil || result.RequeueAfter > 0 {
 		if err != nil {
 			log.Error(err, "build failed", "app", app.Name)
@@ -88,7 +90,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return result, err
 	}
 
-	if err := r.reconcileDeployment(ctx, &app, image, registrySecretName); err != nil {
+	if err := r.reconcileDeployment(ctx, &app, image, repoSecretName); err != nil {
 		log.Error(err, "deployment failed", "app", app.Name)
 		if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionFailure); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
@@ -105,9 +107,10 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) ensureRegistrySecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
+func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
 	log := logf.FromContext(ctx)
 	log.Info("ensuring registry secret", "secret", secretName)
+
 	installationID, err := r.getInstallationID(ctx)
 	if err != nil {
 		return err
@@ -117,33 +120,37 @@ func (r *AppReconciler) ensureRegistrySecret(ctx context.Context, app *appsv1alp
 		return fmt.Errorf("failed to get installation token: %w", err)
 	}
 
-	dockerConfig := fmt.Sprintf(`{"auths":{"ghcr.io":{"username":"x-access-token","password":%q}}}`, token)
+	// TODO: あとでこの辺のリファクタをする
+	dockerConfig := fmt.Sprintf(`{"auths":{"ghcr.io":{"username":"x-access-token","password":%q}}}`, r.GhcrPat)
 
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Name: secretName, Namespace: app.Namespace}
 	err = r.Get(ctx, key, secret)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, r.buildSecret(app, secretName, dockerConfig))
+		return r.Create(ctx, r.buildSecret(app, secretName, dockerConfig, token))
 	}
 	if err != nil {
 		return err
 	}
+	secret.Type = corev1.SecretTypeDockerConfigJson
 	secret.Data = map[string][]byte{
-		"config.json": []byte(dockerConfig),
+		corev1.DockerConfigJsonKey: []byte(dockerConfig),
+		"github-token":             []byte(token),
 	}
 	return r.Update(ctx, secret)
 }
 
-func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.App, sha, registrySecretName string) (ctrl.Result, string, error) {
+func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.App, sha, repoSecretName string) (ctrl.Result, string, error) {
 	log := logf.FromContext(ctx)
 	jobName := fmt.Sprintf("%s-build-%s", app.Name, sha[:8])
-	destination := fmt.Sprintf("%s/%s:%s", r.Registry, app.Name, sha[:8])
+	_, repoName := parseRepoURL(app.Spec.Source.Repo)
+	destination := fmt.Sprintf("%s/%s:%s", r.Registry, repoName, sha[:8])
 
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: app.Namespace}, &job)
 	if errors.IsNotFound(err) {
 		log.Info("creating build job", "job", jobName)
-		if err := r.Create(ctx, r.buildJob(app, jobName, destination, sha, registrySecretName)); err != nil {
+		if err := r.Create(ctx, r.buildJob(app, jobName, destination, sha, repoSecretName)); err != nil {
 			return ctrl.Result{}, "", err
 		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, "", nil
@@ -165,13 +172,13 @@ func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.Ap
 	return ctrl.Result{RequeueAfter: 10 * time.Second}, "", nil
 }
 
-func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alpha1.App, image, registrySecretName string) error {
+func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alpha1.App, image, repoSecretName string) error {
 	log := logf.FromContext(ctx)
 	var deploy appsv1.Deployment
 	err := r.Get(ctx, types.NamespacedName{Name: app.Name, Namespace: app.Namespace}, &deploy)
 	if errors.IsNotFound(err) {
 		log.Info("creating deployment", "app", app.Name, "image", image)
-		return r.Create(ctx, buildDeployment(app, image, registrySecretName))
+		return r.Create(ctx, buildDeployment(app, image, repoSecretName))
 	}
 	if err != nil {
 		return err
@@ -188,7 +195,7 @@ func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alph
 	return nil
 }
 
-func (r *AppReconciler) buildSecret(app *appsv1alpha1.App, secretName, dockerConfig string) *corev1.Secret {
+func (r *AppReconciler) buildSecret(app *appsv1alpha1.App, secretName, dockerConfig, githubToken string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
@@ -197,13 +204,16 @@ func (r *AppReconciler) buildSecret(app *appsv1alpha1.App, secretName, dockerCon
 				*metav1.NewControllerRef(app, appsv1alpha1.GroupVersion.WithKind("App")),
 			},
 		},
+		Type: corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{
-			"config.json": []byte(dockerConfig),
+			corev1.DockerConfigJsonKey: []byte(dockerConfig),
+			"github-token":             []byte(githubToken),
 		},
 	}
 }
 
-func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sha, registrySecretName string) *batchv1.Job {
+func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sha, repoSecretName string) *batchv1.Job {
+	owner, repo := parseRepoURL(app.Spec.Source.Repo)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
@@ -220,11 +230,22 @@ func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sh
 						{
 							Name:  "buildkit",
 							Image: "moby/buildkit:latest",
+							Env: []corev1.EnvVar{
+								{
+									Name: "GITHUB_TOKEN",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{Name: repoSecretName},
+											Key:                  "github-token",
+										},
+									},
+								},
+							},
 							Command: []string{
 								"buildctl-daemonless.sh",
 								"build",
 								"--frontend=dockerfile.v0",
-								"--opt", fmt.Sprintf("context=%s#%s", app.Spec.Source.Repo, sha),
+								"--opt", fmt.Sprintf("context=https://x-access-token:$(GITHUB_TOKEN)@github.com/%s/%s.git#%s", owner, repo, sha),
 								"--opt", fmt.Sprintf("filename=%s", app.Spec.Source.DockerfilePath),
 								"--output", fmt.Sprintf("type=image,name=%s,push=true", destination),
 							},
@@ -233,7 +254,7 @@ func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sh
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "registry-auth",
+									Name:      "repo-auth",
 									MountPath: "/root/.docker",
 								},
 							},
@@ -241,11 +262,17 @@ func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sh
 					},
 					Volumes: []corev1.Volume{
 						{
-							Name: "registry-auth",
+							Name: "repo-auth",
 							VolumeSource: corev1.VolumeSource{
-								Secret: &corev1.SecretVolumeSource{
-									SecretName: registrySecretName,
-								},
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: repoSecretName,
+										Items: []corev1.KeyToPath{
+											{
+												Key:  corev1.DockerConfigJsonKey,
+												Path: "config.json",
+											},
+										},
+									},
 							},
 						},
 					},
@@ -255,7 +282,7 @@ func (r *AppReconciler) buildJob(app *appsv1alpha1.App, jobName, destination, sh
 	}
 }
 
-func buildDeployment(app *appsv1alpha1.App, image, registrySecretName string) *appsv1.Deployment {
+func buildDeployment(app *appsv1alpha1.App, image, repoSecretName string) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      app.Name,
@@ -275,7 +302,7 @@ func buildDeployment(app *appsv1alpha1.App, image, registrySecretName string) *a
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: []corev1.LocalObjectReference{
-						{Name: registrySecretName},
+						{Name: repoSecretName},
 					},
 					Containers: []corev1.Container{
 						{
