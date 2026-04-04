@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -123,7 +122,9 @@ func (s *Server) updateLastPushSHA(ctx context.Context, app *appsv1alpha1.App, s
 	if app.Annotations == nil {
 		app.Annotations = map[string]string{}
 	}
-	app.Annotations["snappy/last-push-sha"] = sha
+	app.Annotations[config.LastPushAnnotation] = sha
+	// 新しいコミットの場合はCheckRunが再度走るように削除する
+	app.Annotations[config.CheckRunAnnotation] = ""
 	return s.k8s.Update(ctx, app)
 }
 
@@ -133,15 +134,6 @@ func branchFromRef(ref string) string {
 		return ref[len(prefix):]
 	}
 	return ref
-}
-
-func (s *Server) installationID(ctx context.Context) (int64, error) {
-	secret := &corev1.Secret{}
-	key := client.ObjectKey{Name: config.TokenSecretName, Namespace: config.TokenSecretNS}
-	if err := s.k8s.Get(ctx, key, secret); err != nil {
-		return 0, err
-	}
-	return strconv.ParseInt(string(secret.Data["installation_id"]), 10, 64)
 }
 
 func (s *Server) compareRepositoryURL(repo1, repo2 string) bool {

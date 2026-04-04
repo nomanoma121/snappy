@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG = ghcr.io/nomanoma121/snappy:latest
+SERVER_IMG = ghcr.io/nomanoma121/snappy-server:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -107,6 +108,17 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
+
+.PHONY: docker-build-server
+docker-build-server: ## Build and push server docker image (linux/amd64).
+	$(CONTAINER_TOOL) buildx build --platform linux/amd64 -t ${SERVER_IMG} -f Dockerfile.server . --push
+
+.PHONY: docker-build-controller
+docker-build-controller: ## Build and push controller docker image (linux/amd64).
+	$(CONTAINER_TOOL) buildx build --platform linux/amd64 -t ${IMG} . --push
+
+.PHONY: release
+release: docker-build-controller docker-build-server deploy ## Build and deploy both controller and server.
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

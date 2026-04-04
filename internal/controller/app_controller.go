@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,7 +63,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	sha := app.Annotations["snappy/last-push-sha"]
+	sha := app.Annotations[config.LastPushAnnotation]
 	if sha == "" {
 		return ctrl.Result{}, nil
 	}
@@ -80,14 +81,15 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	}
 
 	result, image, err := r.reconcileBuild(ctx, &app, sha, repoSecretName)
-	if err != nil || result.RequeueAfter > 0 {
-		if err != nil {
-			log.Error(err, "build failed", "app", app.Name)
-		}
+	if err != nil {
+		log.Error(err, "build failed", "app", app.Name)
 		if err := r.updateCheckRun(ctx, &app, checkRunID, forge.CheckConclusionFailure); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to update check run: %w", err)
 		}
 		return result, err
+	}
+	if result.RequeueAfter > 0 {
+		return result, nil
 	}
 
 	if err := r.reconcileDeployment(ctx, &app, image, repoSecretName); err != nil {
@@ -334,12 +336,27 @@ func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 }
 
 func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.App, sha string, status forge.CheckStatus) (int64, error) {
+	log := logf.FromContext(ctx)
 	installationID, err := r.getInstallationID(ctx)
 	if err != nil {
 		return 0, err
 	}
 	owner, repo := parseRepoURL(app.Spec.Source.Repo)
-	return r.GitHubClient.CreateCheckRun(ctx, installationID, owner, repo, sha, "deploy", status)
+
+	// ReconcileのたびにCheckRunが走ってしまうため、過去に作成していた場合IDをそのまま返す
+	checkRunId := app.Annotations[config.CheckRunAnnotation]
+	if checkRunId != "" {
+		log.Info("reusing existing check run", "checkRunId", checkRunId)
+		return strconv.ParseInt(checkRunId, 10, 64)
+	}
+
+	id, err := r.GitHubClient.CreateCheckRun(ctx, installationID, owner, repo, sha, "deploy", status)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create check run: %w", err)
+	}
+
+	app.Annotations[config.CheckRunAnnotation] = strconv.FormatInt(id, 10)
+	return id, r.Update(ctx, app)
 }
 
 func (r *AppReconciler) updateCheckRun(ctx context.Context, app *appsv1alpha1.App, checkRunID int64, conclusion forge.CheckConclusion) error {
