@@ -103,6 +103,7 @@ func (s *Server) Webhook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var payload gh.PushEvent
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("failed to decode payload: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
@@ -110,6 +111,7 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 	branch := branchFromRef(*payload.Ref)
 	appList := &appsv1alpha1.AppList{}
 	if err := s.k8s.List(ctx, appList); err != nil {
+		log.Printf("failed to list apps: %v", err)
 		http.Error(w, "failed to list apps", http.StatusInternalServerError)
 		return
 	}
@@ -117,6 +119,7 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 	for _, app := range appList.Items {
 		if compareRepositoryURL(app.Spec.Source.Repo, *payload.Repo.CloneURL) && app.Spec.Source.Branch == branch {
 			if err := s.updateLastPushSHA(ctx, &app, *payload.After); err != nil {
+				log.Printf("failed to update app: %v", err)
 				http.Error(w, "failed to update app", http.StatusInternalServerError)
 				return
 			}
@@ -129,40 +132,46 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var payload gh.PullRequestEvent
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("failed to decode payload: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
 	// Closedのような関係の無いイベントは無視する
 	action := payload.GetAction()
 	if !slices.Contains(interestedActions, action) {
+		log.Printf("ignoring pull request event with action: %s", action)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	app, err := s.lookupApp(ctx, *payload.Repo.CloneURL, branchFromRef(*payload.PullRequest.Base.Ref))
 	if err != nil {
+		log.Printf("failed to lookup app: %v", err)
 		http.Error(w, "app not found", http.StatusNotFound)
 		return
 	}
 	installationID, err := s.getInstallationID(ctx)
 	if err != nil {
+		log.Printf("failed to get installation ID: %v", err)
 		http.Error(w, "failed to get installation ID", http.StatusInternalServerError)
 		return
 	}
 
 	checkRunID, err := s.github.CreateCheckRun(ctx, installationID, *payload.Repo.Owner.Login, *payload.Repo.Name, *payload.PullRequest.Head.SHA, "deploy", github.CheckStatusInProgress)
 	if err != nil {
+		log.Printf("failed to create check run: %v", err)
 		http.Error(w, "failed to create check run", http.StatusInternalServerError)
 		return
 	}
 
 	sha := *payload.PullRequest.Head.SHA
-	job := resource.NewBuildImageJob(app, fmt.Sprintf("%s-pr-build-%s", app.Name, sha[:8]), sha, config.TokenSecretName)
+	job := resource.NewBuildImageJob(app, fmt.Sprintf("%s-pr-build-%s", app.Name, sha[:8]), sha, fmt.Sprintf("%s-repo-auth", app.Name))
 	if err := s.k8s.Create(ctx, job); err != nil {
+		log.Printf("failed to create job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 
-	go s.watchJob(context.Background(), job.Name, job.Namespace, func(succeeded bool) {
+	go s.watchJob(job.Name, job.Namespace, func(succeeded bool) {
 		var conclusion github.CheckConclusion
 		if succeeded {
 			conclusion = github.CheckConclusionSuccess
@@ -177,10 +186,10 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) watchJob(ctx context.Context, jobName, namespace string, fn func(succeeded bool)) {
+func (s *Server) watchJob(jobName, namespace string, fn func(succeeded bool)) {
 	for {
 		var job batchv1.Job
-		if err := s.k8s.Get(ctx, client.ObjectKey{Name: jobName, Namespace: namespace}, &job); err != nil {
+		if err := s.k8s.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: namespace}, &job); err != nil {
 			log.Printf("failed to get job: %v", err)
 			return
 		}
@@ -199,6 +208,7 @@ func (s *Server) watchJob(ctx context.Context, jobName, namespace string, fn fun
 func (s *Server) lookupApp(ctx context.Context, repoURL, branch string) (*appsv1alpha1.App, error) {
 	appList := &appsv1alpha1.AppList{}
 	if err := s.k8s.List(ctx, appList); err != nil {
+		log.Printf("failed to list apps: %v", err)
 		return nil, fmt.Errorf("failed to list apps: %w", err)
 	}
 
@@ -210,6 +220,7 @@ func (s *Server) lookupApp(ctx context.Context, repoURL, branch string) (*appsv1
 		}
 	}
 	if targetApp == nil {
+		log.Printf("app not found for repo %s and branch %s", repoURL, branch)
 		return nil, fmt.Errorf("app not found for repo %s and branch %s", repoURL, branch)
 	}
 
@@ -219,6 +230,7 @@ func (s *Server) lookupApp(ctx context.Context, repoURL, branch string) (*appsv1
 func (s *Server) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
 	if err := s.k8s.Get(ctx, client.ObjectKey{Name: config.TokenSecretName, Namespace: config.TokenSecretNS}, &secret); err != nil {
+		log.Printf("failed to get github token secret: %v", err)
 		return 0, fmt.Errorf("failed to get github token secret: %w", err)
 	}
 	return strconv.ParseInt(string(secret.Data["installation_id"]), 10, 64)

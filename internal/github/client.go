@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"log"
 	"net/http"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
@@ -50,6 +51,7 @@ func (c *GitHubClient) CreateCheckRun(ctx context.Context, installationID int64,
 	if err != nil {
 		return 0, err
 	}
+	log.Printf("created check run with ID: %d", run.GetID())
 	return run.GetID(), nil
 }
 
@@ -64,6 +66,7 @@ func (c *GitHubClient) UpdateCheckRun(ctx context.Context, installationID int64,
 		Status:     gh.Ptr(string(CheckStatusCompleted)),
 		Conclusion: gh.Ptr(string(conclusion)),
 	})
+	log.Printf("updated check run with ID: %d, conclusion: %s", checkRunID, conclusion)
 	return err
 }
 
