@@ -146,20 +146,21 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	job := resource.NewBuildImageJob(app, fmt.Sprintf("%s-pr-build-%s", app.Name, *payload.PullRequest.Head.SHA), *payload.PullRequest.Head.SHA, config.TokenSecretName)
+	sha := *payload.PullRequest.Head.SHA
+	job := resource.NewBuildImageJob(app, fmt.Sprintf("%s-pr-build-%s", app.Name, sha[:8]), sha, config.TokenSecretName)
 	if err := s.k8s.Create(ctx, job); err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 
-	go s.watchJob(ctx, job.Name, job.Namespace, func(succeeded bool) {
+	go s.watchJob(context.Background(), job.Name, job.Namespace, func(succeeded bool) {
 		var conclusion github.CheckConclusion
 		if succeeded {
 			conclusion = github.CheckConclusionSuccess
 		} else {
 			conclusion = github.CheckConclusionFailure
 		}
-		if err := s.github.UpdateCheckRun(ctx, installationID, *payload.Repo.Owner.Login, *payload.Repo.Name, checkRunID, conclusion); err != nil {
+		if err := s.github.UpdateCheckRun(context.Background(), installationID, *payload.Repo.Owner.Login, *payload.Repo.Name, checkRunID, conclusion); err != nil {
 			log.Printf("failed to update check run: %v", err)
 		}
 	})
