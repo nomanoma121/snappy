@@ -3,8 +3,8 @@ package config
 import "fmt"
 
 const (
-	InstallationIDSecretName = "snappy-installation-id-secret"
-	InstallationIDSecretNS   = "snappy-system"
+	SnappyAppSecretName = "snappy-app-secret"
+	SnappyAppSecretNS   = "snappy-system"
 	InstallationIDKey = "installation-id"
 
 	InstallationAccessTokenKey = "installation-access-token"

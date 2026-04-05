@@ -196,7 +196,7 @@ func (r *AppReconciler) reconcileDeployment(ctx context.Context, app *appsv1alph
 
 func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
-	if err := r.Get(ctx, types.NamespacedName{Name: config.InstallationIDSecretName, Namespace: config.InstallationIDSecretNS}, &secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: config.SnappyAppSecretName, Namespace: config.SnappyAppSecretNS}, &secret); err != nil {
 		return 0, fmt.Errorf("failed to get installation ID secret: %w", err)
 	}
 	return strconv.ParseInt(string(secret.Data[config.InstallationIDKey]), 10, 64)
@@ -204,8 +204,8 @@ func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 
 func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.App, sha string, status github.CheckStatus) (int64, error) {
 	log := logf.FromContext(ctx)
-	installationID, err := r.getInstallationID(ctx)
-	if err != nil {
+			installationID, err := r.getInstallationID(ctx)
+			if err != nil {
 		return 0, err
 	}
 	owner, repo := github.ParseRepoURL(app.Spec.Source.Repo)

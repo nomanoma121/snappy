@@ -71,8 +71,8 @@ func (s *Server) Callback(w http.ResponseWriter, r *http.Request) {
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.InstallationIDSecretName,
-			Namespace: config.InstallationIDSecretNS,
+			Name:      config.SnappyAppSecretName,
+			Namespace: config.SnappyAppSecretNS,
 		},
 		Data: map[string][]byte{
 			config.InstallationIDKey: []byte(installationIDStr),
@@ -229,7 +229,7 @@ func (s *Server) lookupApp(ctx context.Context, repoURL, branch string) (*appsv1
 
 func (s *Server) getInstallationID(ctx context.Context) (int64, error) {
 	var secret corev1.Secret
-	if err := s.k8s.Get(ctx, client.ObjectKey{Name: config.InstallationIDSecretName, Namespace: config.InstallationIDSecretNS}, &secret); err != nil {
+	if err := s.k8s.Get(ctx, client.ObjectKey{Name: config.SnappyAppSecretName, Namespace: config.SnappyAppSecretNS}, &secret); err != nil {
 		log.Printf("failed to get installation ID secret: %v", err)
 		return 0, fmt.Errorf("failed to get installation ID secret: %w", err)
 	}
