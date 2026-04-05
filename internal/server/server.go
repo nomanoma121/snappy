@@ -27,7 +27,7 @@ import (
 const (
 	githubAppName = "snappy-release"
 
-	checkRunName = "Build Image"
+	checkRunName = "Snappy"
 )
 
 var interestedActions = []string{"opened", "synchronize"}
@@ -185,7 +185,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 		title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
 		summary: github.NewSummary(fmt.Sprintf("Building %s 🚀", prCtx.app.Name), github.BuildMarkdownTable(
 			[]string{"Name", "Latest Commit", "Status"},
-			[][]string{{prCtx.app.Name, prCtx.sha[:8], "⏳ In Progress"}},
+			[][]string{{prCtx.app.Name, prCtx.sha[:8], "⏳ In Progress..."}},
 		)),
 		status: github.CheckStatusInProgress,
 	}); err != nil {
