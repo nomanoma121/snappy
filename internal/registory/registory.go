@@ -11,6 +11,7 @@ const (
 
 type Registry interface {
 	DockerConfig(appName string) string
+	Host() string
 	Token() string
 }
 
@@ -28,6 +29,10 @@ func NewGHCR(host, token string) *GHCR {
 
 func (r *GHCR) DockerConfig(appName string) string {
 	return fmt.Sprintf(`{"auths":{"%s":{"username":"x-access-token","password":%q}}}`, r.host, r.token)
+}
+
+func (r *GHCR) Host() string {
+	return r.host
 }
 
 func (r *GHCR) Token() string {
@@ -48,6 +53,10 @@ func NewGCR(host, token string) *GCR {
 
 func (r *GCR) DockerConfig(appName string) string {
 	return fmt.Sprintf(`{"auths":{"%s":{"username":"_json_key","password":%q}}}`, r.host, r.token)
+}
+
+func (r *GCR) Host() string {
+	return r.host
 }
 
 func (r *GCR) Token() string {

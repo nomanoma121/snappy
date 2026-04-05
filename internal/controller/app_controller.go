@@ -143,7 +143,7 @@ func (r *AppReconciler) reconcileBuild(ctx context.Context, app *appsv1alpha1.Ap
 	log := logf.FromContext(ctx)
 	jobName := config.BuildPushImageJobName(app.Name, sha)
 	_, repoName := github.ParseRepoURL(app.Spec.Source.Repo)
-	destination := fmt.Sprintf("%s/%s:%s", r.Registry, repoName, sha[:8])
+	destination := fmt.Sprintf("%s/%s:%s", r.Registry.Host(), repoName, sha[:8])
 
 	var job batchv1.Job
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: app.Namespace}, &job)
