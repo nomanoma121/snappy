@@ -26,6 +26,8 @@ import (
 
 const (
 	githubAppName = "snappy-release"
+
+	checkRunName = "Build Image"
 )
 
 var interestedActions = []string{"opened", "synchronize"}
@@ -131,126 +133,147 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type pullRequestEventContext struct {
+	app            *appsv1alpha1.App
+	job            *batchv1.Job
+	payload        *gh.PullRequestEvent
+	installationID int64
+	checkRunID     int64
+	commentID      int64
+}
+
 func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	var payload gh.PullRequestEvent
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	var prCtx pullRequestEventContext
+	if err := json.NewDecoder(r.Body).Decode(&prCtx.payload); err != nil {
 		log.Printf("failed to decode payload: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
 	// Closedのような関係の無いイベントは無視する
-	action := payload.GetAction()
+	action := prCtx.payload.GetAction()
 	if !slices.Contains(interestedActions, action) {
 		log.Printf("ignoring pull request event with action: %s", action)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	app, err := s.lookupApp(ctx, *payload.Repo.CloneURL, branchFromRef(*payload.PullRequest.Base.Ref))
+	var err error
+	prCtx.app, err = s.lookupApp(ctx, *prCtx.payload.Repo.CloneURL, branchFromRef(*prCtx.payload.PullRequest.Base.Ref))
 	if err != nil {
 		log.Printf("failed to lookup app: %v", err)
 		http.Error(w, "app not found", http.StatusNotFound)
 		return
 	}
-	installationID, err := s.getInstallationID(ctx)
+	prCtx.installationID, err = s.getInstallationID(ctx)
 	if err != nil {
 		log.Printf("failed to get installation ID: %v", err)
 		http.Error(w, "failed to get installation ID", http.StatusInternalServerError)
 		return
 	}
 
-	commentID, err := s.createOrUpdateIssueComment(ctx, app, createOrUpdateIssueCommentParams{
-		installationID: installationID,
-		owner:          *payload.Repo.Owner.Login,
-		repo:           *payload.Repo.Name,
-		prNumber:       payload.GetNumber(),
-		comment:        "Thanks for your pull request! The deployment is being processed.",
-	})
-	if err != nil {
-		log.Printf("failed to create or update issue comment: %v", err)
-		http.Error(w, "failed to create or update issue comment", http.StatusInternalServerError)
+	if prCtx.checkRunID, err = s.notifyBuildStatus(ctx, &prCtx, notifyBuildStatusParams{
+			title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
+			summary: github.BuildMarkdownTable(
+				[]string{"Name", "Latest Commit", "Status"},
+				[][]string{{prCtx.app.Name, prCtx.payload.PullRequest.Head.GetSHA()[:8], "In Progress"}},
+			),
+			status: github.CheckStatusInProgress,
+	}); err != nil {
+		log.Printf("failed to notify build status: %v", err)
+		http.Error(w, "failed to notify build status", http.StatusInternalServerError)
 		return
 	}
 
-	checkRunID, err := s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
-		InstallationID: installationID,
-		Owner:          *payload.Repo.Owner.Login,
-		Repo:           *payload.Repo.Name,
-		CreateCheckRunOptions: github.CreateCheckRunOptions{
-			Name:    "Building Image...",
-			HeadSHA: *payload.PullRequest.Head.SHA,
-			Status:  github.CheckStatusInProgress,
-			Title:   "Deploying...",
-			Summary: "Your app is being deployed to the cluster.",
-			Text:    "We'll update this check run with the result of the deployment.",
-		},
-	})
-	if err != nil {
-		log.Printf("failed to create check run: %v", err)
-		http.Error(w, "failed to create check run", http.StatusInternalServerError)
-		return
-	}
-
-	sha := *payload.PullRequest.Head.SHA
-	job := resource.NewBuildImageJob(app, config.BuildImageJobName(app.Name, sha), sha, config.RepoSecretName(app.Name))
-	if err := s.k8s.Create(ctx, job); err != nil {
+	prCtx.job = resource.NewBuildImageJob(prCtx.app, config.BuildImageJobName(prCtx.app.Name, *prCtx.payload.PullRequest.Head.SHA), *prCtx.payload.PullRequest.Head.SHA, config.RepoSecretName(prCtx.app.Name))
+	if err := s.k8s.Create(ctx, prCtx.job); err != nil {
 		log.Printf("failed to create job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 
-	go s.watchJob(job.Name, job.Namespace, func(succeeded bool) {
-		var conclusion github.CheckConclusion
-		if succeeded {
-			conclusion = github.CheckConclusionSuccess
-		} else {
-			conclusion = github.CheckConclusionFailure
-		}
-		if err := s.github.UpdateCheckRun(context.Background(), github.UpdateCheckRunParams{
-			InstallationID: installationID,
-			Owner:          *payload.Repo.Owner.Login,
-			Repo:           *payload.Repo.Name,
-			CheckRunID:     checkRunID,
-			UpdateCheckRunOptions: github.UpdateCheckRunOptions{
-				Name:       "Building Image...",
-				Status:     github.CheckStatusCompleted,
-				Conclusion: conclusion,
-				Title:      "Deployment Complete",
-				Summary:    "The deployment has been completed.",
-				Text:       fmt.Sprintf("Your app deployment %s.", conclusion),
-			},
-		}); err != nil {
-			log.Printf("failed to update check run: %v", err)
-		}
-		if err := s.github.UpdateIssueComment(context.Background(), github.UpdateIssueCommentParams{
-			InstallationID: installationID,
-			Owner:          *payload.Repo.Owner.Login,
-			Repo:           *payload.Repo.Name,
-			CommentID:      commentID,
-			Comment:          fmt.Sprintf("Deployment %s.", conclusion),
-		}); err != nil {
-			log.Printf("failed to update issue comment: %v", err)
-		}
-	})
+	go s.watchJob(&prCtx, s.onJobComplete)
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) watchJob(jobName, namespace string, fn func(succeeded bool)) {
+func (s *Server) watchJob(prCtx *pullRequestEventContext, fn func(ctx context.Context, prCtx *pullRequestEventContext, succeeded bool)) {
+	ctx := context.Background()
 	for {
 		var job batchv1.Job
-		if err := s.k8s.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: namespace}, &job); err != nil {
+		if err := s.k8s.Get(context.Background(), client.ObjectKey{Name: prCtx.job.Name, Namespace: prCtx.job.Namespace}, &job); err != nil {
 			log.Printf("failed to get job: %v", err)
 			return
 		}
 		if job.Status.Succeeded > 0 {
-			fn(true)
+			fn(ctx, prCtx, true)
 			return
 		}
 		if job.Status.Failed > 0 {
-			fn(false)
+			fn(ctx, prCtx, false)
 			return
 		}
 		time.Sleep(1 * time.Second)
+	}
+}
+
+type notifyBuildStatusParams struct {
+	status     github.CheckStatus
+	conclusion github.CheckConclusion
+	title      string
+	summary    string
+	text       string
+}
+
+func (s *Server) notifyBuildStatus(ctx context.Context, prCtx *pullRequestEventContext, params notifyBuildStatusParams) (int64, error) {
+	_, err := s.createOrUpdateIssueComment(ctx, prCtx.app, createOrUpdateIssueCommentParams{
+		installationID: prCtx.installationID,
+		owner:          *prCtx.payload.Repo.Owner.Login,
+		repo:           *prCtx.payload.Repo.Name,
+		prNumber:       *prCtx.payload.PullRequest.Number,
+		comment:        "Thanks for your pull request! The deployment is being processed.",
+	})
+	if err != nil {
+		log.Printf("failed to create or update issue comment: %v", err)
+		return 0, err
+	}
+
+	checkRunID, err := s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
+		InstallationID: prCtx.installationID,
+		Owner:          *prCtx.payload.Repo.Owner.Login,
+		Repo:           *prCtx.payload.Repo.Name,
+		CreateCheckRunOptions: github.CreateCheckRunOptions{
+			Name:    checkRunName,
+			HeadSHA: prCtx.payload.PullRequest.Head.GetSHA(),
+			Status:  github.CheckStatusInProgress,
+			Title:   fmt.Sprintf("Building image for %s...", prCtx.app.Name),
+			Summary: github.BuildMarkdownTable(
+				[]string{"Name", "Latest Commit", "Status"},
+				[][]string{{prCtx.app.Name, prCtx.payload.PullRequest.Head.GetSHA()[:8], "In Progress"}},
+			),
+			Text: "We'll update this check run with the result of the deployment.",
+		},
+	})
+	if err != nil {
+		log.Printf("failed to create check run: %v", err)
+		return 0, err
+	}
+	return checkRunID, nil
+}
+
+func(s *Server) onJobComplete(ctx context.Context, prCtx *pullRequestEventContext, succeeded bool) {
+	var notifyBuildStatusParams notifyBuildStatusParams
+	if succeeded {
+		notifyBuildStatusParams.conclusion = github.CheckConclusionSuccess
+		notifyBuildStatusParams.title = "✅ Built Successfully"
+		notifyBuildStatusParams.summary = fmt.Sprintf("The image for %s has been built successfully.", prCtx.app.Name)
+		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s has been built successfully. The deployment will start shortly.", prCtx.app.Name)
+	} else {
+		notifyBuildStatusParams.conclusion = github.CheckConclusionFailure
+		notifyBuildStatusParams.title = "❌ Build Failed"
+		notifyBuildStatusParams.summary = fmt.Sprintf("The image for %s failed to build.", prCtx.app.Name)
+		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s failed to build.", prCtx.app.Name)
+	}
+	if _, err := s.notifyBuildStatus(ctx, prCtx, notifyBuildStatusParams); err != nil {
+		log.Printf("failed to notify build status: %v", err)
 	}
 }
 
@@ -332,6 +355,7 @@ func (s *Server) createOrUpdateIssueComment(ctx context.Context, app *appsv1alph
 		}); err != nil {
 			return commentID, fmt.Errorf("failed to update issue comment: %w", err)
 		}
+		return commentID, nil
 	}
 
 	commentID, err = s.github.CreateIssueComment(ctx, github.CreateIssueCommentParams{
