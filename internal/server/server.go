@@ -157,7 +157,19 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	checkRunID, err := s.github.CreateCheckRun(ctx, installationID, *payload.Repo.Owner.Login, *payload.Repo.Name, *payload.PullRequest.Head.SHA, "deploy", github.CheckStatusInProgress)
+	checkRunID, err := s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
+		InstallationID: installationID,
+		Owner:          *payload.Repo.Owner.Login,
+		Repo:           *payload.Repo.Name,
+		CreateCheckRunOptions: github.CreateCheckRunOptions{
+			Name:    "Building Image...",
+			HeadSHA: *payload.PullRequest.Head.SHA,
+			Status:  github.CheckStatusInProgress,
+			Title:   "Deploying...",
+			Summary: "Your app is being deployed to the cluster.",
+			Text:    "We'll update this check run with the result of the deployment.",
+		},
+	})
 	if err != nil {
 		log.Printf("failed to create check run: %v", err)
 		http.Error(w, "failed to create check run", http.StatusInternalServerError)
@@ -179,7 +191,20 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 		} else {
 			conclusion = github.CheckConclusionFailure
 		}
-		if err := s.github.UpdateCheckRun(context.Background(), installationID, *payload.Repo.Owner.Login, *payload.Repo.Name, checkRunID, conclusion); err != nil {
+		if err := s.github.UpdateCheckRun(context.Background(), github.UpdateCheckRunParams{
+			InstallationID: installationID,
+			Owner:          *payload.Repo.Owner.Login,
+			Repo:           *payload.Repo.Name,
+			CheckRunID:     checkRunID,
+			UpdateCheckRunOptions: github.UpdateCheckRunOptions{
+				Name:       "Building Image...",
+				Status:     github.CheckStatusCompleted,
+				Conclusion: conclusion,
+				Title:      "Deployment Complete",
+				Summary:    "The deployment has been completed.",
+				Text:       fmt.Sprintf("Your app deployment %s.", conclusion),
+			},
+		}); err != nil {
 			log.Printf("failed to update check run: %v", err)
 		}
 	})

@@ -204,8 +204,8 @@ func (r *AppReconciler) getInstallationID(ctx context.Context) (int64, error) {
 
 func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.App, sha string, status github.CheckStatus) (int64, error) {
 	log := logf.FromContext(ctx)
-			installationID, err := r.getInstallationID(ctx)
-			if err != nil {
+	installationID, err := r.getInstallationID(ctx)
+	if err != nil {
 		return 0, err
 	}
 	owner, repo := github.ParseRepoURL(app.Spec.Source.Repo)
@@ -217,7 +217,19 @@ func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 		return strconv.ParseInt(checkRunId, 10, 64)
 	}
 
-	id, err := r.GitHubClient.CreateCheckRun(ctx, installationID, owner, repo, sha, "deploy", status)
+	id, err := r.GitHubClient.CreateCheckRun(ctx, github.CreateCheckRunParams{
+		InstallationID: installationID,
+		Owner:          owner,
+		Repo:           repo,
+		CreateCheckRunOptions: github.CreateCheckRunOptions{
+			Name:    fmt.Sprintf("Deploying %s...", app.Name),
+			HeadSHA: sha,
+			Status:  github.CheckStatusInProgress,
+			Title:   fmt.Sprintf("Deploying %s...", app.Name),
+			Summary: "Your app is being deployed to the cluster.",
+			Text:    "We'll update this check run with the result of the deployment.",
+		},
+	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to create check run: %w", err)
 	}
@@ -232,7 +244,20 @@ func (r *AppReconciler) updateCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 		return err
 	}
 	owner, repo := github.ParseRepoURL(app.Spec.Source.Repo)
-	return r.GitHubClient.UpdateCheckRun(ctx, installationID, owner, repo, checkRunID, conclusion)
+	return r.GitHubClient.UpdateCheckRun(ctx, github.UpdateCheckRunParams{
+		InstallationID: installationID,
+		Owner:          owner,
+		Repo:           repo,
+		CheckRunID:     checkRunID,
+		UpdateCheckRunOptions: github.UpdateCheckRunOptions{
+			Name:       fmt.Sprintf("Deploying %s...", app.Name),
+			Title:      fmt.Sprintf("Deployment %s", conclusion),
+			Summary:    fmt.Sprintf("Your app deployment %s.", conclusion),
+			Status:     github.CheckStatusCompleted,
+			Conclusion: conclusion,
+			Text:    fmt.Sprintf("Your app deployment %s.", conclusion),
+		},
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
