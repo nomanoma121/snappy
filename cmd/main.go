@@ -213,8 +213,8 @@ func main() {
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		GitHubClient: github.NewGitHubClient(appID, privateKey),
-		// GCRを使いたい場合はここを書き換える
-		Registry: registory.NewGHCR(registory.GHCRHost, string(ghcrPat)),
+		// GHCR以外を使いたい場合はここを書き換える
+		Registry: registory.NewGHCR("ghcr.io/nomanoma121", string(ghcrPat)),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "App")
 		os.Exit(1)
