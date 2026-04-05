@@ -38,12 +38,12 @@ const (
 )
 
 type CreateCheckRunOptions struct {
-	Name    string
-	HeadSHA string
-	Status  CheckStatus
-	Title   string
-	Summary string
-	Text    string
+	Name       string
+	HeadSHA    string
+	Status     CheckStatus
+	Title      string
+	Summary    string
+	Text       string
 }
 
 type CreateCheckRunParams struct {
@@ -60,11 +60,11 @@ func (c *GitHubClient) CreateCheckRun(ctx context.Context, params CreateCheckRun
 	}
 
 	run, _, err := client.Checks.CreateCheckRun(ctx, params.Owner, params.Repo, gh.CreateCheckRunOptions{
-		Name:    params.CreateCheckRunOptions.Name,
-		HeadSHA: params.CreateCheckRunOptions.HeadSHA,
-		Status:  gh.Ptr(string(params.CreateCheckRunOptions.Status)),
+		Name:       params.CreateCheckRunOptions.Name,
+		HeadSHA:    params.CreateCheckRunOptions.HeadSHA,
+		Status:     gh.Ptr(string(params.CreateCheckRunOptions.Status)),
 		Output: &gh.CheckRunOutput{
-			Title:   gh.Ptr(params.CreateCheckRunOptions.Title),
+			Title:   gh.Ptr(params.CreateCheckRunOptions.Title),						
 			Summary: gh.Ptr(params.CreateCheckRunOptions.Summary),
 			Text:    gh.Ptr(params.CreateCheckRunOptions.Text),
 		},

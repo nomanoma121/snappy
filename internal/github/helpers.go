@@ -41,3 +41,7 @@ func BuildMarkdownTable(headers []string, rows [][]string) string {
 
 	return sb.String()
 }
+
+func NewSummary(header, body string) string {
+	return "## " + header + "\n\n" + body
+}

@@ -183,10 +183,10 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 
 	if prCtx.checkRunID, err = s.notifyBuildStatus(ctx, &prCtx, notifyBuildStatusParams{
 		title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
-		summary: github.BuildMarkdownTable(
+		summary: github.NewSummary(fmt.Sprintf("Building %s 🚀", prCtx.app.Name), github.BuildMarkdownTable(
 			[]string{"Name", "Latest Commit", "Status"},
 			[][]string{{prCtx.app.Name, prCtx.sha[:8], "⏳ In Progress"}},
-		),
+		)),
 		status: github.CheckStatusInProgress,
 	}); err != nil {
 		log.Printf("failed to notify build status: %v", err)
@@ -247,24 +247,40 @@ func (s *Server) notifyBuildStatus(ctx context.Context, prCtx *pullRequestEventC
 		return 0, err
 	}
 
-	checkRunID, err := s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
+	if prCtx.checkRunID != 0 {
+		if err := s.github.UpdateCheckRun(ctx, github.UpdateCheckRunParams{
+			InstallationID: prCtx.installationID,
+			Owner:          prCtx.owner,
+			Repo:           prCtx.repo,
+			CheckRunID:     prCtx.checkRunID,
+			UpdateCheckRunOptions: github.UpdateCheckRunOptions{
+				Name:       checkRunName,
+				Status:     params.status,
+				Conclusion: params.conclusion,
+				Title:      params.title,
+				Summary:    params.summary,
+				Text:       params.text,
+			},
+		}); err != nil {
+			log.Printf("failed to update check run: %v", err)
+			return 0, err
+		}
+		return prCtx.checkRunID, nil
+	}
+	
+	return s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
 		InstallationID: prCtx.installationID,
 		Owner:          prCtx.owner,
 		Repo:           prCtx.repo,
 		CreateCheckRunOptions: github.CreateCheckRunOptions{
-			Name:    checkRunName,
-			HeadSHA: prCtx.sha,
-			Status:  params.status,
-			Title:   params.title,
-			Summary: params.summary,
-			Text:    params.text,
+			Name:       checkRunName,
+			HeadSHA:    prCtx.sha,
+			Status:     params.status,
+			Title:      params.title,
+			Summary:    params.summary,
+			Text:       params.text,
 		},
 	})
-	if err != nil {
-		log.Printf("failed to create check run: %v", err)
-		return 0, err
-	}
-	return checkRunID, nil
 }
 
 func (s *Server) onJobComplete(ctx context.Context, prCtx *pullRequestEventContext, succeeded bool) {
@@ -273,19 +289,19 @@ func (s *Server) onJobComplete(ctx context.Context, prCtx *pullRequestEventConte
 		notifyBuildStatusParams.status = github.CheckStatusCompleted
 		notifyBuildStatusParams.conclusion = github.CheckConclusionSuccess
 		notifyBuildStatusParams.title = "Built Successfully"
-		notifyBuildStatusParams.summary = github.BuildMarkdownTable(
+		notifyBuildStatusParams.summary = github.NewSummary(fmt.Sprintf("Building %s 🚀", prCtx.app.Name), github.BuildMarkdownTable(
 			[]string{"Name", "Latest Commit", "Status"},
 			[][]string{{prCtx.app.Name, prCtx.sha[:8], "✅ Built Successfully"}},
-		)
+		))
 		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s has been built successfully. The deployment will start shortly.", prCtx.app.Name)
 	} else {
 		notifyBuildStatusParams.status = github.CheckStatusCompleted
 		notifyBuildStatusParams.conclusion = github.CheckConclusionFailure
 		notifyBuildStatusParams.title = "Build Failed"
-		notifyBuildStatusParams.summary = github.BuildMarkdownTable(
+		notifyBuildStatusParams.summary = github.NewSummary(fmt.Sprintf("Building %s 🚀", prCtx.app.Name), github.BuildMarkdownTable(
 			[]string{"Name", "Latest Commit", "Status"},
 			[][]string{{prCtx.app.Name, prCtx.sha[:8], "❌ Build Failed"}},
-		)
+		))
 		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s failed to build.", prCtx.app.Name)
 	}
 	if _, err := s.notifyBuildStatus(ctx, prCtx, notifyBuildStatusParams); err != nil {

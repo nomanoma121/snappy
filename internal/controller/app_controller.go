@@ -224,7 +224,7 @@ func (r *AppReconciler) createCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 		CreateCheckRunOptions: github.CreateCheckRunOptions{
 			Name:    fmt.Sprintf("Deploying %s...", app.Name),
 			HeadSHA: sha,
-			Status:  github.CheckStatusInProgress,
+			Status:  status,
 			Title:   fmt.Sprintf("Deploying %s...", app.Name),
 			Summary: "Your app is being deployed to the cluster.",
 			Text:    "We'll update this check run with the result of the deployment.",
@@ -255,7 +255,7 @@ func (r *AppReconciler) updateCheckRun(ctx context.Context, app *appsv1alpha1.Ap
 			Summary:    fmt.Sprintf("Your app deployment %s.", conclusion),
 			Status:     github.CheckStatusCompleted,
 			Conclusion: conclusion,
-			Text:    fmt.Sprintf("Your app deployment %s.", conclusion),
+			Text:       fmt.Sprintf("Your app deployment %s.", conclusion),
 		},
 	})
 }
