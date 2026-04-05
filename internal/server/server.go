@@ -182,12 +182,12 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 	}
 
 	if prCtx.checkRunID, err = s.notifyBuildStatus(ctx, &prCtx, notifyBuildStatusParams{
-			title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
-			summary: github.BuildMarkdownTable(
-				[]string{"Name", "Latest Commit", "Status"},
-				[][]string{{prCtx.app.Name, prCtx.sha[:8], "In Progress"}},
-			),
-			status: github.CheckStatusInProgress,
+		title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
+		summary: github.BuildMarkdownTable(
+			[]string{"Name", "Latest Commit", "Status"},
+			[][]string{{prCtx.app.Name, prCtx.sha[:8], "In Progress"}},
+		),
+		status: github.CheckStatusInProgress,
 	}); err != nil {
 		log.Printf("failed to notify build status: %v", err)
 		http.Error(w, "failed to notify build status", http.StatusInternalServerError)
@@ -267,17 +267,25 @@ func (s *Server) notifyBuildStatus(ctx context.Context, prCtx *pullRequestEventC
 	return checkRunID, nil
 }
 
-func(s *Server) onJobComplete(ctx context.Context, prCtx *pullRequestEventContext, succeeded bool) {
+func (s *Server) onJobComplete(ctx context.Context, prCtx *pullRequestEventContext, succeeded bool) {
 	var notifyBuildStatusParams notifyBuildStatusParams
 	if succeeded {
+		notifyBuildStatusParams.status = github.CheckStatusCompleted
 		notifyBuildStatusParams.conclusion = github.CheckConclusionSuccess
-		notifyBuildStatusParams.title = "✅ Built Successfully"
-		notifyBuildStatusParams.summary = fmt.Sprintf("The image for %s has been built successfully.", prCtx.app.Name)
+		notifyBuildStatusParams.title = "Built Successfully"
+		notifyBuildStatusParams.summary = github.BuildMarkdownTable(
+			[]string{"Name", "Latest Commit", "Status"},
+			[][]string{{prCtx.app.Name, prCtx.sha[:8], "✅ Built Successfully"}},
+		)
 		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s has been built successfully. The deployment will start shortly.", prCtx.app.Name)
 	} else {
+		notifyBuildStatusParams.status = github.CheckStatusCompleted
 		notifyBuildStatusParams.conclusion = github.CheckConclusionFailure
-		notifyBuildStatusParams.title = "❌ Build Failed"
-		notifyBuildStatusParams.summary = fmt.Sprintf("The image for %s failed to build.", prCtx.app.Name)
+		notifyBuildStatusParams.title = "Build Failed"
+		notifyBuildStatusParams.summary = github.BuildMarkdownTable(
+			[]string{"Name", "Latest Commit", "Status"},
+			[][]string{{prCtx.app.Name, prCtx.sha[:8], "❌ Build Failed"}},
+		)
 		notifyBuildStatusParams.text = fmt.Sprintf("The image for %s failed to build.", prCtx.app.Name)
 	}
 	if _, err := s.notifyBuildStatus(ctx, prCtx, notifyBuildStatusParams); err != nil {
