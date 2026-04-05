@@ -136,28 +136,39 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 type pullRequestEventContext struct {
 	app            *appsv1alpha1.App
 	job            *batchv1.Job
-	payload        *gh.PullRequestEvent
+	owner          string
+	repo           string
+	sha            string
+	prNumber       int
 	installationID int64
 	checkRunID     int64
 	commentID      int64
 }
 
 func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	var prCtx pullRequestEventContext
-	if err := json.NewDecoder(r.Body).Decode(&prCtx.payload); err != nil {
+	var payload gh.PullRequestEvent
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		log.Printf("failed to decode payload: %v", err)
 		http.Error(w, "invalid payload", http.StatusBadRequest)
 		return
 	}
 	// Closedのような関係の無いイベントは無視する
-	action := prCtx.payload.GetAction()
+	action := payload.GetAction()
 	if !slices.Contains(interestedActions, action) {
 		log.Printf("ignoring pull request event with action: %s", action)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+
+	prCtx := pullRequestEventContext{
+		owner:    payload.GetRepo().GetOwner().GetLogin(),
+		repo:     payload.GetRepo().GetName(),
+		sha:      payload.GetPullRequest().GetHead().GetSHA(),
+		prNumber: payload.GetNumber(),
+	}
+
 	var err error
-	prCtx.app, err = s.lookupApp(ctx, *prCtx.payload.Repo.CloneURL, branchFromRef(*prCtx.payload.PullRequest.Base.Ref))
+	prCtx.app, err = s.lookupApp(ctx, payload.GetRepo().GetCloneURL(), branchFromRef(payload.GetPullRequest().GetBase().GetRef()))
 	if err != nil {
 		log.Printf("failed to lookup app: %v", err)
 		http.Error(w, "app not found", http.StatusNotFound)
@@ -174,7 +185,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 			title: fmt.Sprintf("Building image for %s...", prCtx.app.Name),
 			summary: github.BuildMarkdownTable(
 				[]string{"Name", "Latest Commit", "Status"},
-				[][]string{{prCtx.app.Name, prCtx.payload.PullRequest.Head.GetSHA()[:8], "In Progress"}},
+				[][]string{{prCtx.app.Name, prCtx.sha[:8], "In Progress"}},
 			),
 			status: github.CheckStatusInProgress,
 	}); err != nil {
@@ -183,7 +194,7 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	prCtx.job = resource.NewBuildImageJob(prCtx.app, config.BuildImageJobName(prCtx.app.Name, *prCtx.payload.PullRequest.Head.SHA), *prCtx.payload.PullRequest.Head.SHA, config.RepoSecretName(prCtx.app.Name))
+	prCtx.job = resource.NewBuildImageJob(prCtx.app, config.BuildImageJobName(prCtx.app.Name, prCtx.sha), prCtx.sha, config.RepoSecretName(prCtx.app.Name))
 	if err := s.k8s.Create(ctx, prCtx.job); err != nil {
 		log.Printf("failed to create job: %v", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
@@ -226,10 +237,10 @@ type notifyBuildStatusParams struct {
 func (s *Server) notifyBuildStatus(ctx context.Context, prCtx *pullRequestEventContext, params notifyBuildStatusParams) (int64, error) {
 	_, err := s.createOrUpdateIssueComment(ctx, prCtx.app, createOrUpdateIssueCommentParams{
 		installationID: prCtx.installationID,
-		owner:          *prCtx.payload.Repo.Owner.Login,
-		repo:           *prCtx.payload.Repo.Name,
-		prNumber:       *prCtx.payload.PullRequest.Number,
-		comment:        "Thanks for your pull request! The deployment is being processed.",
+		owner:          prCtx.owner,
+		repo:           prCtx.repo,
+		prNumber:       prCtx.prNumber,
+		comment:        params.summary,
 	})
 	if err != nil {
 		log.Printf("failed to create or update issue comment: %v", err)
@@ -238,18 +249,15 @@ func (s *Server) notifyBuildStatus(ctx context.Context, prCtx *pullRequestEventC
 
 	checkRunID, err := s.github.CreateCheckRun(ctx, github.CreateCheckRunParams{
 		InstallationID: prCtx.installationID,
-		Owner:          *prCtx.payload.Repo.Owner.Login,
-		Repo:           *prCtx.payload.Repo.Name,
+		Owner:          prCtx.owner,
+		Repo:           prCtx.repo,
 		CreateCheckRunOptions: github.CreateCheckRunOptions{
 			Name:    checkRunName,
-			HeadSHA: prCtx.payload.PullRequest.Head.GetSHA(),
-			Status:  github.CheckStatusInProgress,
-			Title:   fmt.Sprintf("Building image for %s...", prCtx.app.Name),
-			Summary: github.BuildMarkdownTable(
-				[]string{"Name", "Latest Commit", "Status"},
-				[][]string{{prCtx.app.Name, prCtx.payload.PullRequest.Head.GetSHA()[:8], "In Progress"}},
-			),
-			Text: "We'll update this check run with the result of the deployment.",
+			HeadSHA: prCtx.sha,
+			Status:  params.status,
+			Title:   params.title,
+			Summary: params.summary,
+			Text:    params.text,
 		},
 	})
 	if err != nil {
