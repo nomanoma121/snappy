@@ -119,6 +119,7 @@ func (s *Server) handlePushEvent(ctx context.Context, w http.ResponseWriter, r *
 
 	for _, app := range appList.Items {
 		if compareRepositoryURL(app.Spec.Source.Repo, *payload.Repo.CloneURL) && app.Spec.Source.Branch == branch {
+			// Annotaiionを更新してReconcileを走らせる
 			if err := s.updateLastPushSHA(ctx, &app, *payload.After); err != nil {
 				log.Printf("failed to update app: %v", err)
 				http.Error(w, "failed to update app", http.StatusInternalServerError)
@@ -154,6 +155,19 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 	if err != nil {
 		log.Printf("failed to get installation ID: %v", err)
 		http.Error(w, "failed to get installation ID", http.StatusInternalServerError)
+		return
+	}
+
+	commentID, err := s.createOrUpdateIssueComment(ctx, app, createOrUpdateIssueCommentParams{
+		installationID: installationID,
+		owner:          *payload.Repo.Owner.Login,
+		repo:           *payload.Repo.Name,
+		prNumber:       payload.GetNumber(),
+		comment:        "Thanks for your pull request! The deployment is being processed.",
+	})
+	if err != nil {
+		log.Printf("failed to create or update issue comment: %v", err)
+		http.Error(w, "failed to create or update issue comment", http.StatusInternalServerError)
 		return
 	}
 
@@ -206,6 +220,15 @@ func (s *Server) handlePullRequestEvent(ctx context.Context, w http.ResponseWrit
 			},
 		}); err != nil {
 			log.Printf("failed to update check run: %v", err)
+		}
+		if err := s.github.UpdateIssueComment(context.Background(), github.UpdateIssueCommentParams{
+			InstallationID: installationID,
+			Owner:          *payload.Repo.Owner.Login,
+			Repo:           *payload.Repo.Name,
+			CommentID:      commentID,
+			Comment:          fmt.Sprintf("Deployment %s.", conclusion),
+		}); err != nil {
+			log.Printf("failed to update issue comment: %v", err)
 		}
 	})
 
@@ -260,6 +283,71 @@ func (s *Server) getInstallationID(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("failed to get installation ID secret: %w", err)
 	}
 	return strconv.ParseInt(string(secret.Data[config.InstallationIDKey]), 10, 64)
+}
+
+func (s *Server) getCommentID(app *appsv1alpha1.App) (int64, bool, error) {
+	if app.Annotations == nil {
+		return 0, false, nil
+	}
+	commentIDStr, ok := app.Annotations[config.CheckRunAnnotation]
+	if !ok {
+		return 0, false, nil
+	}
+	commentID, err := strconv.ParseInt(commentIDStr, 10, 64)
+	if err != nil {
+		log.Printf("invalid comment ID: %v", err)
+		return 0, false, fmt.Errorf("invalid comment ID: %w", err)
+	}
+	return commentID, true, nil
+}
+
+func (s *Server) setCommentID(ctx context.Context, app *appsv1alpha1.App, commentID int64) error {
+	if app.Annotations == nil {
+		app.Annotations = map[string]string{}
+	}
+	app.Annotations[config.CheckRunAnnotation] = strconv.FormatInt(commentID, 10)
+	return s.k8s.Update(ctx, app)
+}
+
+type createOrUpdateIssueCommentParams struct {
+	installationID int64
+	owner          string
+	repo           string
+	prNumber       int
+	comment        string
+}
+
+func (s *Server) createOrUpdateIssueComment(ctx context.Context, app *appsv1alpha1.App, params createOrUpdateIssueCommentParams) (int64, error) {
+	commentID, exist, err := s.getCommentID(app)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get comment ID: %w", err)
+	}
+	if exist {
+		if err := s.github.UpdateIssueComment(ctx, github.UpdateIssueCommentParams{
+			InstallationID: params.installationID,
+			Owner:          params.owner,
+			Repo:           params.repo,
+			CommentID:      commentID,
+			Comment:        params.comment,
+		}); err != nil {
+			return commentID, fmt.Errorf("failed to update issue comment: %w", err)
+		}
+	}
+
+	commentID, err = s.github.CreateIssueComment(ctx, github.CreateIssueCommentParams{
+		InstallationID: params.installationID,
+		Owner:          params.owner,
+		Repo:           params.repo,
+		PrNumber:       params.prNumber,
+		Comment:        params.comment,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to create or update issue comment: %w", err)
+	}
+	if err := s.setCommentID(ctx, app, commentID); err != nil {
+		return 0, fmt.Errorf("failed to save comment ID: %w", err)
+	}
+	return commentID, nil
 }
 
 func (s *Server) updateLastPushSHA(ctx context.Context, app *appsv1alpha1.App, sha string) error {
