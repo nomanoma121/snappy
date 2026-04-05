@@ -84,6 +84,7 @@ func (s *Server) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TODO: ここをちょっとだけリッチにする
 	w.Write([]byte("GitHub App installed successfully"))
 }
 
