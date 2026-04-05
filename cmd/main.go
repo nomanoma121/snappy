@@ -40,6 +40,7 @@ import (
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
 	"github.com/nomanoma121/snappy/internal/controller"
 	"github.com/nomanoma121/snappy/internal/github"
+	"github.com/nomanoma121/snappy/internal/registory"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -212,8 +213,8 @@ func main() {
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
 		GitHubClient: github.NewGitHubClient(appID, privateKey),
-		Registry:     "ghcr.io/nomanoma121",
-		GhcrPat:      string(ghcrPat),
+		// GCRを使いたい場合はここを書き換える
+		Registry: registory.NewGHCR(registory.GHCRHost, string(ghcrPat)),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "App")
 		os.Exit(1)

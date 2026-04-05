@@ -34,6 +34,7 @@ import (
 	appsv1alpha1 "github.com/nomanoma121/snappy/api/v1alpha1"
 	"github.com/nomanoma121/snappy/internal/config"
 	github "github.com/nomanoma121/snappy/internal/github"
+	"github.com/nomanoma121/snappy/internal/registory"
 	"github.com/nomanoma121/snappy/internal/resource"
 	appsv1 "k8s.io/api/apps/v1"
 )
@@ -43,8 +44,7 @@ type AppReconciler struct {
 	client.Client
 	Scheme       *runtime.Scheme
 	GitHubClient *github.GitHubClient
-	Registry     string // e.g. "ghcr.io/you"
-	GhcrPat      string // PAT for pushing to ghcr.io
+	Registry     registory.Registry
 }
 
 // +kubebuilder:rbac:groups=apps.nomanoma121.github.io,resources=apps,verbs=get;list;watch;create;update;patch;delete
@@ -74,8 +74,8 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return ctrl.Result{}, fmt.Errorf("failed to create check run: %w", err)
 	}
 
-	if err := r.ensureRepoSecret(ctx, &app, config.RepoSecretName(app.Name)); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to ensure registry secret: %w", err)
+	if err := r.prepareRepoSecret(ctx, &app, config.RepoSecretName(app.Name)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to prepare repo secret: %w", err)
 	}
 
 	result, image, err := r.reconcileBuild(ctx, &app, sha, config.RepoSecretName(app.Name))
@@ -107,7 +107,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
+func (r *AppReconciler) prepareRepoSecret(ctx context.Context, app *appsv1alpha1.App, secretName string) error {
 	log := logf.FromContext(ctx)
 
 	installationID, err := r.getInstallationID(ctx)
@@ -121,14 +121,11 @@ func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.
 		return fmt.Errorf("failed to get installation token: %w", err)
 	}
 
-	// TODO: あとでこの辺のリファクタをする
-	dockerConfig := fmt.Sprintf(`{"auths":{"ghcr.io":{"username":"x-access-token","password":%q}}}`, r.GhcrPat)
-
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Name: secretName, Namespace: app.Namespace}
 	err = r.Get(ctx, key, secret)
 	if errors.IsNotFound(err) {
-		return r.Create(ctx, resource.NewAppSecret(app, secretName, dockerConfig, token))
+		return r.Create(ctx, resource.NewAppSecret(app, secretName, r.Registry.DockerConfig(app.Name), token))
 	}
 	if err != nil {
 		log.Error(err, "failed to get repo secret", "secret", secretName)
@@ -136,7 +133,7 @@ func (r *AppReconciler) ensureRepoSecret(ctx context.Context, app *appsv1alpha1.
 	}
 	secret.Type = corev1.SecretTypeDockerConfigJson
 	secret.Data = map[string][]byte{
-		corev1.DockerConfigJsonKey:        []byte(dockerConfig),
+		corev1.DockerConfigJsonKey:        []byte(r.Registry.DockerConfig(app.Name)),
 		config.InstallationAccessTokenKey: []byte(token),
 	}
 	return r.Update(ctx, secret)
